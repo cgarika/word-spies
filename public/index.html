@@ -70,6 +70,19 @@
     color:#6d75a0; font-weight:700; font-size:13.5px; margin-bottom:8px; }
   .mt10{margin-top:10px}.mt12{margin-top:12px}.mt18{margin-top:18px}
   .hidden{ display:none !important; }
+  #rolechip{ width:100%; max-width:600px; text-align:center; font-weight:900; font-size:13.5px;
+    letter-spacing:.04em; border-radius:13px; padding:9px 12px; margin-bottom:8px;
+    background:rgba(26,30,52,.72); border:1px solid var(--glassbd); }
+  #rolechip.spy{ border-color:rgba(255,194,51,.6); color:var(--gold); }
+  .helpbtn{ width:26px; height:26px; border-radius:50%; border:1px solid rgba(255,255,255,.3);
+    background:rgba(255,255,255,.08); color:var(--txt); font-weight:900; cursor:pointer;
+    font-family:inherit; font-size:14px; vertical-align:middle; margin-left:8px; }
+  .helpwrap{ position:fixed; inset:0; background:rgba(5,7,18,.82); display:flex; align-items:center;
+    justify-content:center; z-index:60; padding:16px; }
+  .helpbox{ background:rgba(26,30,52,.97); border:1px solid var(--glassbd); border-radius:20px;
+    padding:20px; max-width:440px; box-shadow:0 24px 60px rgba(0,0,0,.6); }
+  .helpstep{ font-size:14px; line-height:1.55; font-weight:600; color:var(--txt); margin-top:10px; }
+  .helpstep b{ color:var(--gold); }
 
   /* game */
   .teams{ width:100%; max-width:600px; display:flex; gap:10px; margin-bottom:10px; }
@@ -90,7 +103,9 @@
     font-weight:900; font-size:13px; background:conic-gradient(var(--gold) calc(var(--pct,0)*1%), rgba(255,255,255,.08) 0); }
   .timer span{ width:35px; height:35px; border-radius:50%; background:#161a33; display:flex; align-items:center; justify-content:center; }
   .board{ width:100%; max-width:600px; display:grid; grid-template-columns:repeat(5,1fr); gap:7px; }
-  .tile{ min-height:58px; border-radius:12px; border:1.5px solid rgba(255,255,255,.14); background:rgba(30,34,60,.85);
+  .tile{ min-height:58px; border-radius:12px; border:1.5px solid rgba(120,90,40,.4);
+    background:linear-gradient(160deg,#f6ecd4,#e7d6ae); color:#3a2c12;
+    box-shadow:0 2px 0 rgba(0,0,0,.22), 0 6px 12px rgba(0,0,0,.35), inset 0 2px 2px rgba(255,255,255,.7);
     display:flex; align-items:center; justify-content:center; text-align:center; padding:6px 4px;
     font-weight:800; font-size:12px; letter-spacing:.03em; text-transform:uppercase; line-height:1.15;
     cursor:default; transition:transform .12s var(--ease), box-shadow .2s; position:relative; word-break:break-word; }
@@ -99,13 +114,14 @@
   .tile.kA{ border-color:rgba(255,87,87,.75); box-shadow:inset 0 0 0 1.5px rgba(255,87,87,.5); }
   .tile.kB{ border-color:rgba(91,140,255,.75); box-shadow:inset 0 0 0 1.5px rgba(91,140,255,.5); }
   .tile.kN{ opacity:.75; border-style:dashed; }
-  .tile.kX{ border-color:rgba(255,255,255,.65); background:#05070f; }
+  .tile.kX{ border-color:rgba(255,255,255,.65); background:#05070f; color:#ffd5d5; }
   .tile.kX::after{ content:"💀"; position:absolute; top:2px; right:5px; font-size:11px; }
   .tile.rA{ background:linear-gradient(160deg,#ff7a7a,#d63a3a); color:#fff; border-color:transparent; opacity:.95; }
   .tile.rB{ background:linear-gradient(160deg,#7ba3ff,#3f68d9); color:#fff; border-color:transparent; opacity:.95; }
   .tile.rN{ background:#8f8776; color:#2a2418; border-color:transparent; opacity:.9; }
   .tile.rX{ background:#000; color:var(--red); border-color:var(--red); }
-  .tile.rA,.tile.rB,.tile.rN,.tile.rX{ text-decoration:line-through; text-decoration-thickness:1.5px; }
+  .tile.rA,.tile.rB,.tile.rN,.tile.rX{ text-decoration:line-through; text-decoration-thickness:1.5px;
+    box-shadow:0 2px 0 rgba(0,0,0,.28), 0 8px 16px rgba(0,0,0,.4); }
   .spynote{ width:100%; max-width:600px; text-align:center; font-size:12px; color:var(--mut); font-weight:700; margin-top:8px; }
   .clueform{ width:100%; max-width:600px; display:flex; gap:8px; margin-top:12px; }
   .clueform input{ flex:1; text-transform:uppercase; }
@@ -148,6 +164,7 @@
     border:1px solid rgba(255,255,255,.14); font-weight:700; font-size:14px; z-index:50;
     max-width:90vw; text-align:center; opacity:0; pointer-events:none; transition:opacity .2s; }
   #toast.show{ opacity:1; }
+  @media (prefers-reduced-motion:no-preference){ .btn, .pill, .hcard, .tile, .entry, .cube{ will-change:transform; } }
 </style>
 </head>
 <body>
@@ -181,11 +198,12 @@
 </div>
 
 <div id="game" class="hidden">
-  <div class="wordmark small"><span class="a">WORD</span> <span class="b">SPIES</span><span class="roomtag" id="gameCode"></span></div>
+  <div class="wordmark small"><span class="a">WORD</span> <span class="b">SPIES</span><span class="roomtag" id="gameCode"></span> <button id="helpBtn" class="helpbtn">?</button></div>
   <div class="teams">
     <div class="teambox A" id="boxA"><div class="tt"><span>🔴 RED</span><span class="big" id="remA"></span></div><div class="mem" id="memA"></div></div>
     <div class="teambox B" id="boxB"><div class="tt"><span>🔵 BLUE</span><span class="big" id="remB"></span></div><div class="mem" id="memB"></div></div>
   </div>
+  <div id="rolechip"></div>
   <div class="cluebar">
     <div style="flex:1"><div class="cw" id="clueword"></div><div class="sub" id="cluesub"></div></div>
     <div class="timer" id="timer"><span id="timerNum">–</span></div>
@@ -222,6 +240,17 @@
     </div>
   </div>
   <button class="btn plain small mt12" id="leaveGameBtn">Leave game</button>
+</div>
+<div class="helpwrap hidden" id="helpwrap">
+  <div class="helpbox">
+    <div class="label">HOW TO PLAY — 30 SECONDS</div>
+    <div class="helpstep"><b>1.</b> Two teams. The 25 words belong secretly to Red, Blue, bystanders — and one 💀 trap.</div>
+    <div class="helpstep"><b>2.</b> Each team has one 🗝️ <b>spymaster</b> who can see the secret colors. Everyone else is a 🕵️ <b>guesser</b> and sees plain words.</div>
+    <div class="helpstep"><b>3.</b> On your team's turn, your spymaster sends <b>one word + a number</b> — like OCEAN · 2 means "two of our words relate to OCEAN".</div>
+    <div class="helpstep"><b>4.</b> Guessers talk it out (use voice!) and <b>tap words</b>. Your color = keep going. Wrong color or bystander = turn over.</div>
+    <div class="helpstep"><b>5.</b> Find all your team's words first to win. Tap the 💀 and you lose <b>instantly</b>.</div>
+    <button class="btn red mt12" id="helpClose">Got it — let's play</button>
+  </div>
 </div>
 <div id="toast"></div>
 <script src="socket.io/socket.io.js"></script>
@@ -289,6 +318,18 @@ function renderGame(r){
   $("boxB").classList.toggle("live", r.status==="playing" && r.turnTeam==="B");
 
   const myTeam = r.yourTeam, isSpy = r.youAreSpymaster;
+  const rc = $("rolechip");
+  if (r.status === "playing" && myTeam){
+    rc.classList.remove("hidden");
+    rc.classList.toggle("spy", isSpy);
+    rc.innerHTML = isSpy
+      ? `🗝️ YOU'RE THE ${TN[myTeam].toUpperCase()} SPYMASTER — you see the secret colors. Give one word + a number.`
+      : `🕵️ YOU'RE A ${TN[myTeam].toUpperCase()} GUESSER — wait for your clue, argue out loud, then tap words.`;
+  } else rc.classList.add("hidden");
+  if (r.status === "playing" && !localStorage.getItem("wsHelpSeen")){
+    localStorage.setItem("wsHelpSeen","1");
+    $("helpwrap").classList.remove("hidden");
+  }
   const myTurn = r.status==="playing" && myTeam===r.turnTeam;
   if (r.status==="over"){
     $("clueword").textContent = "GAME OVER";
@@ -363,6 +404,8 @@ $("board").addEventListener("click",(e)=>{
   socket.emit("tapWord",{ i:Number(t.getAttribute("data-i")) });
 });
 $("passBtn").onclick = ()=>socket.emit("pass");
+$("helpBtn").onclick = ()=>$("helpwrap").classList.remove("hidden");
+$("helpClose").onclick = ()=>$("helpwrap").classList.add("hidden");
 $("rematchBtn").onclick = ()=>socket.emit("rematch");
 
 setInterval(()=>{
