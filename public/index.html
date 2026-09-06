@@ -113,7 +113,9 @@
     box-shadow:0 2px 0 rgba(0,0,0,.22), 0 6px 12px rgba(0,0,0,.35), inset 0 2px 2px rgba(255,255,255,.7);
     display:flex; align-items:center; justify-content:center; text-align:center; padding:6px 4px;
     font-weight:800; font-size:12px; letter-spacing:.03em; text-transform:uppercase; line-height:1.15;
-    cursor:default; transition:transform .12s var(--ease), box-shadow .2s; position:relative; word-break:break-word; }
+    cursor:default; transition:transform .12s var(--ease), box-shadow .2s; position:relative; word-break:normal; overflow-wrap:normal; hyphens:none; }
+  /* long words shrink instead of breaking mid-word */
+  .tile.w8{ font-size:10.5px; letter-spacing:.01em; } .tile.w10{ font-size:9.5px; letter-spacing:0; padding:6px 2px; } .tile.w12{ font-size:8.5px; letter-spacing:0; padding:6px 1px; }
   .tile.tap{ cursor:pointer; }
   .tile.tap:active{ transform:scale(.94); }
   .tile.kA{ border-color:rgba(255,87,87,.75); box-shadow:inset 0 0 0 1.5px rgba(255,87,87,.5); }
@@ -411,7 +413,7 @@ function renderLobby(r){
 /* game */
 function memList(r, t){
   return r.players.map((p,i)=>({p,i})).filter(x=>x.p.team===t && !x.p.left)
-    .map(x=>`${x.p.spymaster?"🗝️ ":""}${esc(x.p.name)}${x.i===S.mySeat?" (you)":""}`).join("<br>");
+    .map(x=>`${x.p.spymaster?"🗝️ ":""}${x.i===S.mySeat?"You":esc(x.p.name)}`).join("<br>");
 }
 function renderGame(r){
   show("game");
@@ -428,7 +430,7 @@ function renderGame(r){
     rc.classList.remove("hidden");
     rc.classList.toggle("spy", isSpy);
     rc.innerHTML = isSpy
-      ? `🗝️ YOU'RE THE ${TN[myTeam].toUpperCase()} SPYMASTER — you see the secret colors. Give one word + a number.`
+      ? `🗝️ YOU'RE THE ${TN[myTeam].toUpperCase()} SPYMASTER — you can see the secret colors.${(r.turnTeam===myTeam && r.phase==="clue") ? " Give one word + a number." : " Keep quiet on the other team's turn."}`
       : `🕵️ YOU'RE A ${TN[myTeam].toUpperCase()} GUESSER — wait for your clue, argue out loud, then tap words.`;
   } else rc.classList.add("hidden");
   if (r.status === "playing" && !localStorage.getItem("wsHelpSeen")){
@@ -451,7 +453,7 @@ function renderGame(r){
   const canTap = myTurn && r.phase==="guess" && !isSpy;
   $("board").innerHTML = (r.words||[]).map((w,i)=>{
     const rev = r.revealed && r.revealed[i];
-    let cls = "tile";
+    let cls = "tile" + (w.length >= 12 ? " w12" : w.length >= 10 ? " w10" : w.length >= 8 ? " w8" : "");   // long words shrink, never break
     if (rev){ cls += " r"+rev; if (PREV_REV && !PREV_REV[i]) cls += " flipnew"; }
     else {
       if (r.key) cls += " k"+r.key[i];
@@ -485,6 +487,7 @@ function renderGame(r){
   else $("actionhint").innerHTML = `${TN[r.turnTeam]||""} team's turn.`;
 
   $("log").textContent = r.log || "";
+  $("log").classList.toggle("hidden", /^Teams drawn\./.test(r.log || ""));   // the live clue card already says whose turn it is
   const wasOver = renderGame._over; renderGame._over = r.status==="over";
   if (r.status==="over" && !wasOver) FX.fireworks();
   $("overbox").classList.toggle("hidden", r.status!=="over");
