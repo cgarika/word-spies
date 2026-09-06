@@ -103,6 +103,7 @@
     background:rgba(26,30,52,.72); border:1px solid var(--glassbd); border-radius:16px; padding:10px 14px; }
   .cluebar .cw{ font-weight:900; font-size:18px; letter-spacing:.08em; flex:1; }
   .cluebar .sub{ font-size:12px; color:var(--mut); font-weight:700; }
+  .helpbtn{ width:36px; height:36px; border-radius:50%; flex:none; border:1px solid var(--glassbd); background:rgba(255,255,255,.07); color:var(--txt); font:900 16px/1 inherit; cursor:pointer; }
   .timer{ width:44px; height:44px; border-radius:50%; flex:none; display:flex; align-items:center; justify-content:center;
     font-weight:900; font-size:13px; background:conic-gradient(var(--gold) calc(var(--pct,0)*1%), rgba(255,255,255,.08) 0); }
   .timer span{ width:35px; height:35px; font-size:12px; letter-spacing:-.02em; border-radius:50%; background:#161a33; display:flex; align-items:center; justify-content:center; }
@@ -228,7 +229,7 @@
 </div>
 
 <div id="game" class="hidden">
-  <div class="wordmark small"><span class="a">WORD</span> <span class="b">SPIES</span><span class="roomtag" id="gameCode"></span> <button id="helpBtn" class="helpbtn">?</button></div>
+  <div class="wordmark small"><span class="a">WORD</span> <span class="b">SPIES</span><span class="roomtag" id="gameCode"></span></div>
   <div class="teams">
     <div class="teambox A" id="boxA"><div class="tt"><span>🔴 RED</span><span class="big" id="remA"></span></div><div class="mem" id="memA"></div></div>
     <div class="teambox B" id="boxB"><div class="tt"><span>🔵 BLUE</span><span class="big" id="remB"></span></div><div class="mem" id="memB"></div></div>
@@ -236,6 +237,7 @@
   <div id="rolechip"></div>
   <div class="cluebar">
     <div style="flex:1"><div class="cw" id="clueword"></div><div class="sub" id="cluesub"></div></div>
+    <button id="helpBtn" class="helpbtn" aria-label="How to play" title="How to play">?</button>
     <div class="timer" id="timer"><span id="timerNum">–</span></div>
   </div>
   <div class="board" id="board"></div>
@@ -521,6 +523,7 @@ $("board").addEventListener("click",(e)=>{
 $("passBtn").onclick = ()=>socket.emit("pass");
 $("helpBtn").onclick = ()=>$("helpwrap").classList.remove("hidden");
 $("helpClose").onclick = ()=>$("helpwrap").classList.add("hidden");
+$("helpBtn").onclick = ()=>$("helpwrap").classList.remove("hidden");   // the how-to shows once per install; this reopens it
 $("rematchBtn").onclick = ()=>socket.emit("rematch");
 
 setInterval(()=>{
