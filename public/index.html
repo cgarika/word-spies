@@ -70,6 +70,16 @@
     font-weight:700; margin-bottom:8px; }
   .playerrow .who{ flex:1; }
   .hosttag{ font-size:10.5px; font-weight:800; color:var(--gold); letter-spacing:.08em; }
+  .pausebox{ width:100%; max-width:600px; margin-top:12px; padding:14px 16px; border-radius:16px; background:rgba(255,255,255,.08); text-align:center; }
+  .pausebox .pt{ font-weight:900; font-size:20px; }
+  .pausebox .pr{ font-size:13.5px; color:var(--mut); font-weight:700; margin-top:4px; }
+  .teamtools{ width:100%; max-width:600px; margin-top:10px; padding:10px 12px; border-radius:14px; background:rgba(0,0,0,.18); text-align:left; }
+  .teamtools .tt-row{ display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,.08); font-size:14px; font-weight:700; }
+  .teamtools .tt-row:last-child{ border-bottom:0; }
+  .teamtools .tt-name{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .teamtools .tt-name.A{ color:var(--red); } .teamtools .tt-name.B{ color:var(--blue); }
+  .teamtools .btn.small{ padding:6px 10px; font-size:12px; }
+  .teamtools .tt-head{ display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--mut); font-weight:800; letter-spacing:.06em; margin-bottom:4px; }
   .emptyseat{ padding:11px 13px; border-radius:13px; border:1.5px dashed rgba(255,255,255,.16);
     color:#6d75a0; font-weight:700; font-size:13.5px; margin-bottom:8px; }
   .mt10{margin-top:10px}.mt12{margin-top:12px}.mt18{margin-top:18px}
@@ -254,6 +264,15 @@
   </div>
   <div class="actionhint" id="actionhint"></div>
   <button class="btn hidden" id="seatBackBtn" style="width:auto;margin:6px auto 0;display:block" onclick="socket.emit('takeSeat')">Take my seat back</button>
+  <div class="pausebox hidden" id="pausebox">
+    <div class="pt">⏸ Game paused</div>
+    <div class="pr" id="pausereason"></div>
+  </div>
+  <button class="btn small plain hidden" id="teamsBtn" style="width:auto;margin:8px auto 0;display:block">⚙ Manage teams</button>
+  <div class="teamtools hidden" id="teamtools">
+    <div class="tt-head"><span>HOST TOOLS — move players or hand over a map</span><button class="btn small plain" id="endGameBtn">End game</button></div>
+    <div id="ttrows"></div>
+  </div>
   <div class="log" id="log"></div>
   <div class="overbox hidden" id="overbox">
     <div class="cup" id="overcup">🏆</div>
@@ -438,10 +457,14 @@ function renderGame(r){
     localStorage.setItem("wsHelpSeen","1");
     $("helpwrap").classList.remove("hidden");
   }
-  const myTurn = r.status==="playing" && myTeam===r.turnTeam;
+  const paused = r.status==="playing" && r.phase==="paused";
+  const myTurn = r.status==="playing" && !paused && myTeam===r.turnTeam;
   if (r.status==="over"){
     $("clueword").textContent = "GAME OVER";
     $("cluesub").textContent = "";
+  } else if (paused){
+    $("clueword").textContent = "PAUSED";
+    $("cluesub").textContent = "waiting for players";
   } else if (r.phase==="clue"){
     const spy = r.players.find((p)=>p.spymaster && p.team===r.turnTeam && !p.left);
     $("clueword").textContent = "…";
@@ -482,7 +505,19 @@ function renderGame(r){
 
   const meBot = S.mySeat>=0 && r.players[S.mySeat] && r.players[S.mySeat].botControlled && r.status==="playing";
   $("seatBackBtn").classList.toggle("hidden", !meBot);
+  $("pausebox").classList.toggle("hidden", !paused);
+  if (paused) $("pausereason").textContent = r.pauseReason || "";
+  const isHost = S.mySeat === r.hostSeat && r.status==="playing";
+  $("teamsBtn").classList.toggle("hidden", !isHost);
+  if (!isHost) $("teamtools").classList.add("hidden");
+  else if (paused && !renderGame._pausedShown) { $("teamtools").classList.remove("hidden"); }
+  renderGame._pausedShown = paused;
+  if (isHost) $("ttrows").innerHTML = r.players.map((p,i)=>({p,i})).filter(x=>!x.p.left).map(({p,i})=>`
+    <div class="tt-row"><span class="tt-name ${p.team||""}">${p.spymaster?"🗝️ ":""}${i===S.mySeat?"You":esc(p.name)}${p.botControlled?" 💤":""}${!p.connected?" (offline)":""}</span>
+      <button class="btn small plain" data-seat="${i}" data-team="${p.team==="A"?"B":"A"}">→ ${p.team==="A"?"Blue":"Red"}</button>
+      ${p.spymaster?"":`<button class="btn small plain" data-seat="${i}" data-map="1">Give map</button>`}</div>`).join("");
   if (r.status==="over") $("actionhint").innerHTML = "";
+  else if (paused) $("actionhint").innerHTML = isHost ? "Waiting for players. Use <b>Manage teams</b> to move someone over, or end the game." : "Waiting for players to come back. The host can rearrange the teams.";
   else if (meBot) $("actionhint").innerHTML = "You were marked away — <b>take your seat back</b> to rejoin the play.";
   else if (iClue) $("actionhint").innerHTML = "Type <b>one word</b>, pick a number, send. Don't say it out loud twice 😉";
   else if (canTap) $("actionhint").innerHTML = "Talk it out, then <b>tap a word</b>. Own color = keep going.";
@@ -497,9 +532,10 @@ function renderGame(r){
   $("overbox").classList.toggle("hidden", r.status!=="over");
   if (r.status==="over"){
     $("overcup").textContent = r.winReason==="assassin" ? "💀" : "🏆";
-    $("winname").textContent = (TN[r.winner]||"?") + " team wins!";
-    $("winname").style.color = r.winner==="A" ? "var(--red)" : "var(--blue)";
+    $("winname").textContent = r.winner ? (TN[r.winner]||"?") + " team wins!" : "Game ended";
+    $("winname").style.color = r.winner==="A" ? "var(--red)" : r.winner==="B" ? "var(--blue)" : "";
     $("winreason").textContent = r.winReason==="assassin" ? "The other team tapped the trap word."
+      : r.winReason==="ended" ? "The host called it. No winner this round."
       : r.winReason==="gifted" ? "The enemy revealed their last word for them. Brutal."
       : r.winReason==="forfeit" ? "The other team fell apart."
       : "They found every one of their words.";
@@ -508,6 +544,14 @@ function renderGame(r){
   drawMsgs(r);
   renderVoice(r);
 }
+$("teamsBtn").onclick = ()=>$("teamtools").classList.toggle("hidden");
+$("endGameBtn").onclick = ()=>{ if (confirm("End this game for everyone? Nobody wins.")) socket.emit("endGame"); };
+$("ttrows").addEventListener("click",(e)=>{
+  const b=e.target.closest("button[data-seat]"); if(!b) return;
+  const seat=Number(b.getAttribute("data-seat"));
+  if (b.hasAttribute("data-map")) socket.emit("reassign",{ seat, spymaster:true });
+  else socket.emit("reassign",{ seat, team:b.getAttribute("data-team") });
+});
 function drawCounts(){
   $("counts").innerHTML = [1,2,3,4,5,6,7,8,9,0].map(n=>`<button class="cbtn${n===clueCount?" on":""}" data-n="${n}">${n===0?"∞":n}</button>`).join("");
 }

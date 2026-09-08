@@ -183,6 +183,66 @@ const idxWhere = (key,revealed,t)=>key.findIndex((v,i)=>v===t && !revealed[i]);
         cs.forEach(c=>c.disconnect());
       } finally { srv.kill(); }
     }
+    // ---- T5: push recipients come from the room's team/spymaster maps; pause instead of forfeit; host reassign + endGame ----
+    {
+      const { spawn } = require("child_process"); const http = require("http");
+      const P=3451, URL2="http://localhost:"+P, PP=3452;
+      const pushes=[]; const rec=http.createServer((req,res)=>{ let b=""; req.on("data",c=>b+=c); req.on("end",()=>{ try{ pushes.push(JSON.parse(b)); }catch(_){} res.end("{}"); }); }); await new Promise(r=>rec.listen(PP,r));
+      const srv = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT:String(P), CLUE_MS:"60000", GUESS_MS:"60000", PUSH_URL:"http://localhost:"+PP }, stdio:"ignore" });
+      await sleep(600);
+      const mk2=(name)=>{ const c=io(URL2,{transports:["websocket"],reconnection:false}); c.nm=name; c.st=null; c.seat=-1; c.logs=[]; c.errs=[]; c.on("err",m=>c.errs.push(m)); c.on("state",({room,mySeat})=>{ c.st=room; c.seat=mySeat; if(room&&room.log) c.logs.push(room.log); }); return c; };
+      const wait=async(fn,ms=6000)=>{ const t0=Date.now(); while(Date.now()-t0<ms){ if(fn()) return true; await sleep(15);} return false; };
+      const boot2=async(pfx,n,pre)=>{ const cs=[]; for(let i=0;i<n;i++) cs.push(mk2(pfx+i)); await sleep(250); let code=null; cs[0].on("joined",j=>{code=j.code;}); cs[0].emit("create",{name:pfx+"0",playerId:pfx+"id0"+Math.random(),avatar:"🕵️"}); await wait(()=>code); for(let i=1;i<n;i++) cs[i].emit("join",{code,name:pfx+i,playerId:pfx+"id"+i+Math.random(),avatar:"🕵️"}); await wait(()=>cs[0].st&&cs[0].st.players.length===n); if(pre) await pre(cs); cs[0].emit("start"); await wait(()=>cs.every(c=>c.st&&c.st.status==="playing"&&c.st.yourTeam)); return cs; };
+      const spy2=(cs,t)=>cs.find(c=>c.st.youAreSpymaster&&c.st.yourTeam===t), guess2=(cs,t)=>cs.find(c=>!c.st.youAreSpymaster&&c.st.yourTeam===t);
+      const tok=(nm)=>Buffer.from(nm).toString("hex").padEnd(40,"0");   // tokens must look like device tokens (32+ hex chars)
+      try {
+        // 7a. pushes: everyone registers a token and goes "away"; only the turn team's spymaster is told to clue, only its guesser is told to guess
+        { const cs=await boot2("p",4,async(cs)=>{ for(const c of cs){ c.emit("pushToken",{token:tok(c.nm)}); c.emit("presence",{away:true}); } await sleep(150); });
+          const t=cs[0].st.turnTeam, sp=spy2(cs,t), g=guess2(cs,t);
+          if(!(await wait(()=>pushes.some(x=>/give a clue/.test(x.body)),3000))) throw new Error("T5: no clue push at all (pushes: "+JSON.stringify(pushes).slice(0,200)+")");
+          const clueTo=pushes.filter(x=>/give a clue/.test(x.body)).map(x=>x.token);
+          if(clueTo.join()!==tok(sp.nm)) throw new Error("T5: clue push went to "+clueTo.join()+", expected only "+sp.nm);
+          sp.emit("clue",{word:"ZEBRAXQ",count:1}); if(!(await wait(()=>g.st.phase==="guess"))) throw new Error("T5: clue not accepted");
+          if(!(await wait(()=>pushes.some(x=>/Clue is in/.test(x.body)),3000))) throw new Error("T5: no guess push");
+          const guessTo=pushes.filter(x=>/Clue is in/.test(x.body)).map(x=>x.token);
+          if(guessTo.join()!==tok(g.nm)) throw new Error("T5: guess push went to "+guessTo.join()+", expected only "+g.nm);
+          console.log("PASS T5 push recipients — clue push to the turn spymaster only, guess push to the turn guesser only"); cs.forEach(c=>c.disconnect()); }
+        // 7b. 5 players (3/2): a member of the 2-team leaves → paused, actions blocked; host moves one over → play resumes
+        { const cs=await boot2("q",5); const r=cs[0].st; const nA=r.players.filter(p=>p.team==="A").length; const small=nA===2?"A":"B", big=small==="A"?"B":"A";
+          const leaver=cs.find(c=>c.st.yourTeam===small && c!==cs[0]); const leaverSeat=leaver.seat; const W=cs.find(c=>c!==leaver && c!==cs[0]);
+          leaver.emit("leave"); if(!(await wait(()=>W.st.phase==="paused"))) throw new Error("T5: game did not pause (phase "+W.st.phase+", log "+W.st.log+")");
+          if(W.st.status!=="playing") throw new Error("T5: pause should keep status playing"); if(!W.st.pauseReason||!/short-handed/.test(W.st.pauseReason)) throw new Error("T5: no pause reason: "+W.st.pauseReason);
+          if(W.st.phaseEndsAt) throw new Error("T5: clock should stop while paused");
+          const t=W.st.turnTeam; const sp=spy2(cs.filter(c=>c!==leaver),t); const v=W.st.v||0;
+          if(sp){ sp.emit("clue",{word:"ZEBRAXQ",count:1}); await sleep(250); if(W.st.phase!=="paused") throw new Error("T5: clue accepted while paused"); }
+          // non-host reassign is ignored
+          const mover=cs.find(c=>c.st.yourTeam===big && c!==cs[0]); const nonHost=cs.find(c=>c!==cs[0]&&c!==leaver);
+          nonHost.emit("reassign",{seat:mover.seat,team:small}); await sleep(250); if(W.st.players[mover.seat].team!==big) throw new Error("T5: non-host reassign applied");
+          cs[0].emit("reassign",{seat:mover.seat,team:small});
+          if(!(await wait(()=>W.st.phase!=="paused"))) throw new Error("T5: game did not resume after reassign (phase "+W.st.phase+", log "+W.st.log+")");
+          if(W.st.players[mover.seat].team!==small) throw new Error("T5: player not moved"); if(W.st.pauseReason) throw new Error("T5: pauseReason not cleared");
+          const live=W.st.players.filter(p=>!p.left); if(live.filter(p=>p.team==="A").length!==2||live.filter(p=>p.team==="B").length!==2) throw new Error("T5: teams not 2/2 after move");
+          if(live.filter(p=>p.spymaster&&p.team==="A").length!==1||live.filter(p=>p.spymaster&&p.team==="B").length!==1) throw new Error("T5: each team needs exactly one spymaster");
+          if(!["clue","guess"].includes(W.st.phase)) throw new Error("T5: resumed into phase "+W.st.phase);
+          if(!W.st.phaseEndsAt) throw new Error("T5: clock not re-armed after resume");
+          if(!W.st.logs?.length && !W.logs.some(l=>/Back on/.test(l))) throw new Error("T5: no resume log");
+          // hand the map to a guesser on the small team
+          const g=cs.find(c=>c!==leaver&&c.st.yourTeam===small&&!c.st.youAreSpymaster); cs[0].emit("reassign",{seat:g.seat,spymaster:true});
+          if(!(await wait(()=>g.st.youAreSpymaster))) throw new Error("T5: give-map reassign not applied");
+          if(W.st.players.filter(p=>!p.left&&p.spymaster&&p.team===small).length!==1) throw new Error("T5: two spymasters on one team after give-map");
+          if(!g.st.key) throw new Error("T5: new spymaster did not receive the key");
+          // endGame: non-host ignored, host ends it with no winner
+          nonHost.emit("endGame"); await sleep(250); if(W.st.status!=="playing") throw new Error("T5: non-host ended the game");
+          cs[0].emit("endGame"); if(!(await wait(()=>W.st.status==="over"))) throw new Error("T5: host endGame did not end the game");
+          if(W.st.winner!==null||W.st.winReason!=="ended") throw new Error("T5: endGame should record no winner, reason ended: "+W.st.winner+"/"+W.st.winReason);
+          console.log("PASS T5 pause on short-handed team, actions blocked, host reassign resumes, give-map, host endGame"); cs.forEach(c=>c.disconnect()); }
+        // 7c. no forfeit anywhere: a guesser leaving a 2-player team pauses rather than awarding the game
+        { const cs=await boot2("f",4); const t=cs[0].st.turnTeam; const g=guess2(cs,t)===cs[0]?spy2(cs,t):guess2(cs,t); const W=cs.find(c=>c!==g);
+          g.emit("leave"); if(!(await wait(()=>W.st.phase==="paused"))) throw new Error("T5: leave from a 2-player team should pause, got "+W.st.status+"/"+W.st.phase);
+          if(W.st.winner) throw new Error("T5: a winner was awarded on leave");
+          console.log("PASS T5 no forfeit — leaving pauses instead of handing the win over"); cs.forEach(c=>c.disconnect()); }
+      } finally { srv.kill(); rec.close(); }
+    }
     console.log("ALL WORD SPIES TESTS PASS");
     process.exit(0);
   }catch(e){ console.error("FAIL:", e.message); process.exit(1); }

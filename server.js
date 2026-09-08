@@ -65,6 +65,7 @@ function setupGame(room) {
   room.guessedThisTurn = 0;
   room.winner = null;
   room.winReason = null;
+  room.pauseReason = null; room.resumePhase = null;
   room.status = "playing";
   room.log = `Teams drawn. ${room.startTeam === "A" ? "Red" : "Blue"} team starts with 9 words. Spymaster, give a clue.`;
   armTimer(room);
@@ -106,22 +107,52 @@ function pendingActors(room) {
   return [];
 }
 function guessersOf(room, t) { return room.players.map((p, s) => (!p.left && room.teamOf[s] === t && room.spymaster[t] !== s ? s : -1)).filter((s) => s >= 0); }
-/* Nobody left to act for the turn team. Mirrors the leave rule: a team that cannot play forfeits.
-   If only the map is unmanned but a guesser is available, hand the map over instead. */
-function skipIfNobody(room) {
-  if (room.status !== "playing" || pendingActors(room).length) return false;
-  const t = room.turnTeam, o = t === "A" ? "B" : "A";
-  const avail = (team) => room.players.map((p, s) => (!p.left && !p.botControlled && room.teamOf[s] === team ? s : -1)).filter((s) => s >= 0);
-  if (!avail(o).length && !avail(t).length) { endGame(room, null, "abandoned", "Nobody is left at the table. Game over."); return true; }
-  if (room.phase === "clue") {
-    const mate = avail(t).find((s) => room.players[s].connected) ?? avail(t)[0];
-    if (mate != null) { room.spymaster[t] = mate; room.log = `${room.players[mate].name} takes over the map for ${tname(t)}.`; return false; }   // pending is non-empty now
+/* T5: a team that cannot play does not forfeit — the game pauses (phase "paused" + reason) until someone comes back
+   or the host reassigns seats / ends the game. "Available" = seated, not left, not marked away. */
+function availOf(room, team) { return room.players.map((p, s) => (!p.left && !p.botControlled && room.teamOf[s] === team ? s : -1)).filter((s) => s >= 0); }
+function teamCanPlay(room, t) {
+  return availOf(room, t).length >= 2;   // someone on the map and at least one guesser (tryResume re-seats the map if needed)
+}
+function pauseGame(room, reason) {
+  if (room.status !== "playing" || room.phase === "paused") return;
+  room.resumePhase = room.phase;
+  room.phase = "paused";
+  room.pauseReason = reason;
+  room.phaseEndsAt = null;
+  room.log = `Paused: ${reason}`;
+  clearT(room.code);
+}
+function tryResume(room) {
+  if (room.status !== "playing" || room.phase !== "paused") return false;
+  for (const t of ["A", "B"]) {   // put an available teammate on the map if the spymaster is gone
+    const a = availOf(room, t);
+    if (a.length && !a.includes(room.spymaster[t])) room.spymaster[t] = a.find((s) => room.players[s].connected) ?? a[0];
   }
-  endGame(room, o, "forfeit", `${tname(t)} has nobody left to ${room.phase === "clue" ? "give clues" : "guess"} — ${tname(o)} wins by default.`);
+  if (!teamCanPlay(room, "A") || !teamCanPlay(room, "B")) return false;
+  room.phase = room.resumePhase || "clue";
+  if (room.phase === "guess" && !room.clue) room.phase = "clue";
+  room.pauseReason = null; room.resumePhase = null;
+  room.log = `Back on — ${tname(room.turnTeam)}'s turn (${room.phase === "clue" ? "clue" : "guessing"}).`;
+  armTimer(room);
+  return true;
+}
+/* Nobody left to act for the turn team. If only the map is unmanned but a teammate is available, hand the map over;
+   otherwise pause the game. */
+function skipIfNobody(room) {
+  if (room.status !== "playing" || room.phase === "paused" || pendingActors(room).length) return false;
+  const t = room.turnTeam;
+  if (room.phase === "clue") {
+    const a = availOf(room, t);
+    const mate = a.find((s) => room.players[s].connected) ?? a[0];
+    if (mate != null && a.length >= 2) { room.spymaster[t] = mate; room.log = `${room.players[mate].name} takes over the map for ${tname(t)}.`; return false; }   // pending is non-empty now
+  }
+  const other = t === "A" ? "B" : "A";
+  const who = !availOf(room, t).length && !availOf(room, other).length ? "nobody is at the table" : `${tname(t)} has nobody to ${room.phase === "clue" ? "give clues" : "guess"}`;
+  pauseGame(room, `${who}. Waiting for players to come back — the host can reassign seats or end the game.`);
   return true;
 }
 function refreshAfkClock(room) {
-  if (room.status !== "playing") return;
+  if (room.status !== "playing" || room.phase === "paused") return;
   if (skipIfNobody(room)) return;
   const pend = pendingActors(room);
   if (pend.some((p) => p.connected)) return;
@@ -133,7 +164,7 @@ function refreshAfkClock(room) {
 }
 function armTimer(room) {
   clearT(room.code);
-  if (room.status !== "playing") { room.phaseEndsAt = null; return; }
+  if (room.status !== "playing" || room.phase === "paused") { room.phaseEndsAt = null; return; }
   room.actedThisTurn = room.actedThisTurn || new Set();
   if (skipIfNobody(room)) return;   // flipTurn re-arms
   const pend = pendingActors(room);
@@ -144,7 +175,7 @@ function armTimer(room) {
 }
 function onPhaseTimeout(code) {
   const r = rooms.get(code);
-  if (!r || r.status !== "playing") return;
+  if (!r || r.status !== "playing" || r.phase === "paused") return;
   const notes = [];
   const t = r.turnTeam;
   for (const p of pendingActors(r)) {
@@ -172,6 +203,7 @@ function humanIsBack(room, p, reason) {
   if (!wasBot) return false;
   p.botControlled = false;
   room.log = `${p.name} is back at the table${reason ? " (" + reason + ")" : ""}.`;
+  tryResume(room);
   return true;
 }
 
@@ -187,6 +219,7 @@ function stateFor(room, seat) {
     clue: room.clue, guessesLeft: room.guessesLeft,
     guessedThisTurn: room.guessedThisTurn || 0,
     log: room.log, winner: room.winner, winReason: room.winReason,
+    pauseReason: room.pauseReason || null,
     phaseEndsAt: room.phaseEndsAt || null,
     hostSeat: room.players.findIndex((p) => p.id === room.host),
     minPlayers: MIN_PLAYERS, maxPlayers: MAX_PLAYERS,
@@ -223,9 +256,10 @@ function pushTurn(room) {   // called after every state broadcast; only fires wh
   const key = room.status + "|" + room.turnTeam + "|" + room.phase;
   if (room._pushKey === key) return; room._pushKey = key;
   if (room.status !== "playing") return;
-  for (const p of room.players) { if (p.team !== room.turnTeam) continue;
-    const text = room.phase === "clue" ? (p.spymaster ? "Your team's turn — give a clue" : null) : room.phase === "guess" ? (p.spymaster ? null : "Clue is in — tap your team's words") : null;
-    if (text) pushTo(p, text + " · room " + room.code, { code: room.code, game: PUSH_TITLE }, room.code + "-turn"); }
+  room.players.forEach((p, s) => { if (!room.teamOf || room.teamOf[s] !== room.turnTeam) return;
+    const spy = room.spymaster && room.spymaster[room.turnTeam] === s;
+    const text = room.phase === "clue" ? (spy ? "Your team's turn — give a clue" : null) : room.phase === "guess" ? (spy ? null : "Clue is in — tap your team's words") : null;
+    if (text) pushTo(p, text + " · room " + room.code, { code: room.code, game: PUSH_TITLE }, room.code + "-turn"); });
 }
 
 function sendState(code) {
@@ -383,6 +417,44 @@ io.on("connection", (socket) => {
     const seat = mySeat();
     if (seat >= 0 && humanIsBack(room, room.players[seat], "took the seat back")) bump(room);
   });
+  /* T5 host tools: move a player between teams / hand them the map, or end the game outright. */
+  socket.on("reassign", ({ seat, team, spymaster } = {}) => {
+    const room = currentRoom();
+    if (!room || room.status !== "playing" || room.host !== socket.data.playerId) return;
+    if (!Number.isInteger(seat) || seat < 0 || seat >= room.players.length || room.players[seat].left) return socket.emit("err", "That seat is empty.");
+    const p = room.players[seat];
+    const from = room.teamOf[seat];
+    const to = team === "A" || team === "B" ? team : from;
+    const notes = [];
+    if (to !== from) {
+      room.teamOf[seat] = to;
+      notes.push(`${p.name} moves to ${tname(to)}.`);
+      if (room.spymaster[from] === seat) {   // the old team needs a new map holder
+        const a = availOf(room, from);
+        room.spymaster[from] = a.find((s) => room.players[s].connected) ?? a[0] ?? room.players.findIndex((q, s) => !q.left && room.teamOf[s] === from);
+        if (room.spymaster[from] >= 0) notes.push(`${room.players[room.spymaster[from]].name} takes over the map for ${tname(from)}.`);
+      }
+      if (room.actedThisTurn) room.actedThisTurn.delete(seat);
+    }
+    if (spymaster === true && room.spymaster[to] !== seat) { room.spymaster[to] = seat; notes.push(`${p.name} now holds the ${tname(to)} map.`); }
+    else if (spymaster === false && room.spymaster[to] === seat) {
+      const a = availOf(room, to).filter((s) => s !== seat);
+      const mate = a.find((s) => room.players[s].connected) ?? a[0];
+      if (mate == null) return socket.emit("err", `Nobody else on ${tname(to)} can take the map.`);
+      room.spymaster[to] = mate; notes.push(`${room.players[mate].name} takes over the ${tname(to)} map.`);
+    }
+    if (!notes.length) return;
+    room.log = notes.join(" ");
+    if (!tryResume(room) && room.phase !== "paused") armTimer(room);   // pending actors may have changed
+    bump(room);
+  });
+  socket.on("endGame", () => {
+    const room = currentRoom();
+    if (!room || room.status !== "playing" || room.host !== socket.data.playerId) return;
+    const host = room.players.find((q) => q.id === room.host);
+    endGame(room, null, "ended", `${host ? host.name : "The host"} ended the game.`);
+    bump(room);
+  });
   socket.on("pushToken", ({ token } = {}) => { const room = currentRoom(); if (!room) return; const p = room.players.find((q) => q.id === socket.data.playerId); if (p && typeof token === "string" && /^[0-9a-f]{32,200}$/i.test(token)) p.pushToken = token; });
   socket.on("presence", ({ away } = {}) => { const room = currentRoom(); if (!room) return; const p = room.players.find((q) => q.id === socket.data.playerId); if (p) p.away = !!away; });
 
@@ -454,15 +526,13 @@ io.on("connection", (socket) => {
       if (room.status === "playing") {
         const wasSpy = room.spymaster.A === seat || room.spymaster.B === seat;
         const team = room.teamOf[seat];
-        const mates = room.players.map((q, s) => (!q.left && room.teamOf[s] === team ? s : -1)).filter((s) => s >= 0);
-        if (mates.length === 0 || (wasSpy && mates.length < 1)) {
-          endGame(room, team === "A" ? "B" : "A", "forfeit", `${tname(team)} team fell apart — ${tname(team === "A" ? "B" : "A")} wins by default.`);
-        } else if (wasSpy) {
-          room.spymaster[team] = mates[0];
-          room.log = `${p.name} (spymaster) left — ${room.players[mates[0]].name} takes over the map for ${tname(team)}.`;
-        } else if (mates.length === 1) {
-          endGame(room, team === "A" ? "B" : "A", "forfeit", `${tname(team)} has no guessers left — ${tname(team === "A" ? "B" : "A")} wins.`);
+        const mates = availOf(room, team);
+        if (wasSpy && mates.length) {
+          room.spymaster[team] = mates.find((s) => room.players[s].connected) ?? mates[0];
+          room.log = `${p.name} (spymaster) left — ${room.players[room.spymaster[team]].name} takes over the map for ${tname(team)}.`;
         }
+        if (room.phase !== "paused" && !teamCanPlay(room, team))   // T5: no forfeit — wait for the host or a returning player
+          pauseGame(room, `${tname(team)} is short-handed after ${p.name} left. The host can reassign seats or end the game.`);
       }
     }
     detach();
