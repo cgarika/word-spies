@@ -19,7 +19,16 @@ const GUESS_MS = Number(process.env.GUESS_MS || 75000);
 const AFK_MS = Math.max(200, Number(process.env.AFK_MS || 5000));   // T1: the phase ends this soon once everyone who could act is disconnected
 const TIMEOUTS_TO_BOT = 3;                                              // consecutive missed phases before the seat is skipped automatically
 
-const WORDS = ("ocean,river,mountain,forest,desert,island,volcano,glacier,canyon,beach,storm,thunder,rainbow,shadow,mirror,candle,lantern,bridge,castle,tower,tunnel,harbor,anchor,compass,map,treasure,pirate,ninja,knight,dragon,giant,witch,ghost,robot,alien,rocket,planet,comet,star,moon,sun,cloud,wind,fire,ice,stone,crystal,diamond,gold,silver,copper,iron,steel,glass,paper,scissors,hammer,needle,thread,button,pocket,jacket,boot,glove,crown,ring,chain,key,lock,door,window,ladder,rope,net,trap,cage,nest,egg,feather,wing,claw,tail,horn,shell,spider,scorpion,snake,eagle,falcon,owl,raven,wolf,fox,bear,tiger,lion,panther,shark,whale,dolphin,octopus,crab,turtle,frog,rabbit,mouse,horse,camel,elephant,monkey,panda,koala,penguin,seal,batman,circus,clown,magician,juggler,acrobat,parade,carnival,festival,concert,orchestra,violin,piano,trumpet,drum,flute,guitar,opera,ballet,statue,museum,gallery,library,school,hospital,market,bakery,butcher,farmer,doctor,nurse,pilot,sailor,soldier,spy,detective,judge,lawyer,teacher,student,chef,waiter,barber,tailor,king,queen,prince,princess,wizard,angel,devil,giant,dwarf,elf,troll,zombie,vampire,mummy,skeleton,pyramid,sphinx,temple,church,mosque,palace,fortress,dungeon,maze,garden,fountain,well,mill,barn,fence,gate,path,road,highway,train,subway,tram,bus,taxi,truck,tractor,bicycle,scooter,ship,boat,canoe,ferry,submarine,helicopter,parachute,balloon,kite,arrow,bow,sword,shield,armor,helmet,cannon,bomb,torch,flag,banner,trophy,medal,ticket,coin,wallet,basket,bottle,barrel,bucket,kettle,teapot,plate,spoon,fork,knife,pan,oven,fridge,ladder,broom,brush,soap,towel,pillow,blanket,carpet,curtain,clock,calendar,letter,stamp,pencil,eraser,notebook,camera,radio,telephone,battery,magnet,engine,wheel,spring,screw,pipe,wire,cable,satellite,antenna,laser,microscope,telescope").split(",").map(w=>w.trim()).filter(Boolean).filter((w,i,a)=>a.indexOf(w)===i);
+const WORD_PACKS = {
+  general: ["ocean", "river", "mountain", "forest", "desert", "island", "volcano", "glacier", "canyon", "beach", "storm", "thunder", "rainbow", "shadow", "mirror", "candle", "lantern", "bridge", "castle", "tower", "tunnel", "harbor", "anchor", "compass", "map", "treasure", "pirate", "ninja", "knight", "dragon", "giant", "witch", "ghost", "robot", "alien", "rocket", "planet", "comet", "star", "moon", "sun", "cloud", "wind", "fire", "ice", "stone", "crystal", "diamond", "gold", "silver", "copper", "iron", "steel", "glass", "paper", "scissors", "hammer", "needle", "thread", "button", "pocket", "jacket", "boot", "glove", "crown", "ring", "chain", "key", "lock", "door", "window", "ladder", "rope", "net", "trap", "cage", "nest", "egg", "feather", "wing", "claw", "tail", "horn", "shell", "spider", "scorpion", "snake", "eagle", "falcon", "owl", "raven", "wolf", "fox", "bear", "tiger", "lion", "panther", "shark", "whale", "dolphin", "octopus", "crab", "turtle", "frog", "rabbit", "mouse", "horse", "camel", "elephant", "monkey", "panda", "koala", "penguin", "seal", "batman", "circus", "clown", "magician", "juggler", "acrobat", "parade", "carnival", "festival", "concert", "orchestra", "violin", "piano", "trumpet", "drum", "flute", "guitar", "opera", "ballet", "statue", "museum", "gallery", "library", "school", "hospital", "market", "bakery", "butcher", "farmer", "doctor", "nurse", "pilot", "sailor", "soldier", "spy", "detective", "judge", "lawyer", "teacher", "student", "chef", "waiter", "barber", "tailor", "king", "queen", "prince", "princess", "wizard", "angel", "devil", "dwarf", "elf", "troll", "zombie", "vampire", "mummy", "skeleton", "pyramid", "sphinx", "temple", "church", "mosque", "palace", "fortress", "dungeon", "maze", "garden", "fountain", "well", "mill", "barn", "fence", "gate", "path", "road", "highway", "train", "subway", "tram", "bus", "taxi", "truck", "tractor", "bicycle", "scooter", "ship", "boat", "canoe", "ferry", "submarine", "helicopter", "parachute", "balloon", "kite", "arrow", "bow", "sword", "shield", "armor", "helmet", "cannon", "bomb", "torch", "flag", "banner", "trophy", "medal", "ticket", "coin", "wallet", "basket", "bottle", "barrel", "bucket", "kettle", "teapot", "plate", "spoon", "fork", "knife", "pan", "oven", "fridge", "broom", "brush", "soap", "towel", "pillow", "blanket", "carpet", "curtain", "clock", "calendar", "letter", "stamp", "pencil", "eraser", "notebook", "camera", "radio", "telephone", "battery", "magnet", "engine", "wheel", "spring", "screw", "pipe", "wire", "cable", "satellite", "antenna", "laser", "microscope", "telescope"],
+  movies: ["action", "sequel", "villain", "hero", "popcorn", "trailer", "oscar", "director", "camera", "script", "stunt", "spy", "robot", "alien", "zombie", "vampire", "wizard", "pirate", "jedi", "batman", "joker", "godfather", "titanic", "avatar", "matrix", "gladiator", "rocky", "jaws", "shrek", "frozen", "minion", "marvel", "thanos", "hulk", "spiderman", "ironman", "wakanda", "hogwarts", "gandalf", "hobbit", "narnia", "psycho", "cinema", "ticket", "screen", "premiere", "cameo", "remake", "musical", "cartoon", "anime", "western", "thriller", "comedy", "drama", "horror", "romance", "blockbuster", "bollywood", "tollywood", "sholay", "baahubali", "dabangg", "dhoom", "lagaan", "rrr", "kgf", "pushpa", "jailer", "magadheera", "pokiri", "rajamouli", "prabhas", "chiranjeevi", "mahesh", "ntr", "shahrukh", "salman", "aamir", "deepika", "alia", "rajinikanth", "kamal", "vijay", "thalapathy", "interval", "climax", "dialogue", "punchline", "item", "song", "dance", "mask", "cape", "sidekick", "henchman", "heist", "chase", "explosion", "cliffhanger", "plot", "twist", "flashback", "montage", "credits"],
+  food: ["pizza", "burger", "taco", "sushi", "noodle", "pasta", "curry", "biryani", "samosa", "dosa", "idli", "vada", "chutney", "pickle", "mango", "banana", "cherry", "lemon", "chili", "garlic", "onion", "ginger", "butter", "cheese", "yogurt", "sugar", "salt", "pepper", "cinnamon", "vanilla", "chocolate", "cookie", "cake", "muffin", "donut", "waffle", "pancake", "toast", "bagel", "croissant", "soup", "salad", "steak", "bacon", "sausage", "kebab", "shawarma", "falafel", "hummus", "tofu", "rice", "bread", "naan", "roti", "paratha", "chapati", "dal", "paneer", "jalebi", "laddu", "halwa", "kheer", "lassi", "chai", "coffee", "juice", "smoothie", "omelette", "pulao", "kichdi", "upma", "pongal", "poori", "bhaji", "pakora", "bhel", "pani", "puri", "chaat", "momo", "ramen", "dumpling", "burrito", "nacho", "pretzel", "brownie", "fudge", "caramel", "toffee", "jelly", "custard", "pudding", "sorbet", "gelato", "mousse", "truffle", "olive", "avocado", "coconut", "almond", "cashew", "pistachio", "raisin", "date", "fig", "guava", "papaya", "lychee", "jackfruit", "tamarind", "jaggery"],
+  kids: ["puppy", "kitten", "bunny", "pony", "teddy", "balloon", "bubble", "crayon", "sticker", "puzzle", "lego", "doll", "kite", "swing", "slide", "sandbox", "playground", "unicorn", "dinosaur", "dragon", "princess", "knight", "treasure", "fairy", "giant", "monster", "ghost", "superhero", "rocket", "astronaut", "planet", "moon", "star", "cloud", "snowman", "sled", "mitten", "birthday", "present", "cupcake", "lollipop", "candy", "milk", "nap", "blanket", "pillow", "pajamas", "slipper", "tooth", "tickle", "giggle", "hide", "seek", "tag", "hopscotch", "marbles", "yoyo", "scooter", "bicycle", "wagon", "tricycle", "zoo", "elephant", "giraffe", "monkey", "penguin", "turtle", "frog", "duck", "chick", "lamb", "piglet", "calf", "farm", "tractor", "bus", "train", "boat", "fire", "truck", "police", "doctor", "nurse", "teacher", "school", "lunchbox", "backpack", "pencil", "eraser", "paint", "glue", "scissors", "ribbon", "bow", "hat", "boots", "umbrella", "puddle", "rain", "sun", "beach", "shell", "sandcastle", "ice", "cream", "cone", "jump", "rope", "ball", "goal", "trophy", "medal", "song", "drum", "whistle", "clown", "circus", "magic", "trick"],
+  india: ["namaste", "paisa", "rupayi", "dhaba", "rickshaw", "auto", "mela", "diwali", "holi", "sankranti", "ugadi", "dussehra", "rangoli", "kolam", "muggu", "bindi", "mehndi", "kurta", "saree", "lungi", "dhoti", "chappal", "thali", "achar", "papad", "ghee", "masala", "haldi", "mirchi", "pyaaz", "aloo", "tamatar", "nimbu", "aam", "kela", "annam", "koora", "pappu", "charu", "pachadi", "perugu", "majjiga", "pulihora", "bonda", "mirapakaya", "ulli", "bellam", "nune", "uppu", "kaaram", "cheppulu", "godugu", "illu", "gadi", "badi", "amma", "nanna", "akka", "anna", "chelli", "tammudu", "nanamma", "tata", "mama", "atta", "bava", "pilla", "kukka", "pilli", "aavu", "meka", "gurram", "enugu", "chettu", "puvvu", "nadi", "konda", "samudram", "akasham", "chandrudu", "suryudu", "varsham", "gaali", "chali", "veedhi", "bazaar", "kirana", "dukaan", "gully", "chowk", "ghar", "paani", "dhoop", "baarish", "sapna", "dost", "bhai", "didi", "chacha", "mausi", "dadi", "nani", "beta", "gaadi", "cycle", "jhoola", "patang", "gilli", "danda", "kabaddi", "cricket", "gulli", "lattu", "carrom", "ludo", "tabla", "veena", "dholak", "sitar", "bhajan", "aarti", "puja", "temple", "gopuram", "prasadam", "laddoo", "payasam", "garelu", "bobbatlu", "ariselu", "pesarattu", "gongura", "avakaya", "mamidikaya"],
+};
+const WORDS = WORD_PACKS.general;   // kept for older code paths
+const PACK_NAMES = Object.keys(WORD_PACKS);
+const HISTORY_GAMES = 10;   // T14: no board word repeats within the last 10 games of a room
 
 const rooms = new Map();
 const roomSockets = new Map();
@@ -46,9 +55,8 @@ function setupGame(room) {
   const teamA = seats.filter((s) => room.teamOf[s] === "A");
   const teamB = seats.filter((s) => room.teamOf[s] === "B");
   room.spymaster = { A: teamA[0], B: teamB[0] };
-  // board
-  const pool = shuffle(WORDS.slice());
-  room.words = pool.slice(0, 25);
+  // board (T14: from the host's packs, avoiding words seen in this room's last 10 games)
+  room.words = pickWords(room);
   room.startTeam = crypto.randomInt(2) === 0 ? "A" : "B";
   const other = room.startTeam === "A" ? "B" : "A";
   const key = [];
@@ -69,6 +77,22 @@ function setupGame(room) {
   room.status = "playing";
   room.log = `Teams drawn. ${room.startTeam === "A" ? "Red" : "Blue"} team starts with 9 words. Spymaster, give a clue.`;
   armTimer(room);
+}
+
+/* T14: 25 words from the selected packs; words used in the room's recent games are skipped while enough remain */
+function pickWords(room) {
+  const packs = (room.packs || []).filter((k) => WORD_PACKS[k]);
+  const pool = Array.from(new Set((packs.length ? packs : ["general"]).flatMap((k) => WORD_PACKS[k])));
+  const recent = new Set((room.history || []).flat());
+  let fresh = pool.filter((w) => !recent.has(w));
+  if (fresh.length < 25) {   // small pool: fall back to the least recently used words first
+    const order = (room.history || []).flat();
+    const stale = pool.filter((w) => recent.has(w)).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    fresh = fresh.concat(stale);
+  }
+  const words = shuffle(fresh).slice(0, 25);
+  room.history = ((room.history || []).concat([words])).slice(-HISTORY_GAMES);
+  return words;
 }
 
 function remain(room, t) {
@@ -223,6 +247,7 @@ function stateFor(room, seat) {
     phaseEndsAt: room.phaseEndsAt || null,
     hostSeat: room.players.findIndex((p) => p.id === room.host),
     minPlayers: MIN_PLAYERS, maxPlayers: MAX_PLAYERS,
+    packs: room.packs && room.packs.length ? room.packs : ["general"], packNames: PACK_NAMES,
     players: room.players.map((p, s) => ({
       name: p.name, avatar: p.avatar, left: p.left, connected: p.connected, botControlled: !!p.botControlled,
       team: room.teamOf ? room.teamOf[s] || null : null,
@@ -331,6 +356,17 @@ io.on("connection", (socket) => {
     attach(code);
     socket.emit("joined", { code });
     room.log = `${name} joined.`;
+    bump(room);
+  });
+
+  socket.on("settings", ({ packs } = {}) => {   // T14: host picks the word packs (lobby only)
+    const room = currentRoom();
+    if (!room || room.status !== "lobby" || room.host !== socket.data.playerId) return;
+    if (!Array.isArray(packs)) return;
+    const chosen = Array.from(new Set(packs.filter((k) => typeof k === "string" && WORD_PACKS[k])));
+    if (!chosen.length) return socket.emit("err", "Pick at least one word pack.");
+    room.packs = chosen;
+    room.log = `Word packs: ${chosen.join(", ")}.`;
     bump(room);
   });
 
@@ -554,4 +590,5 @@ setInterval(() => {
   for (const [code, room] of rooms) if (now - room.touched > 2 * 60 * 60 * 1000) deleteRoom(code);
 }, 10 * 60 * 1000);
 
-server.listen(PORT, () => console.log("Word Spies running on port " + PORT));
+if (require.main === module) server.listen(PORT, () => console.log("Word Spies running on port " + PORT));
+module.exports = { WORD_PACKS, pickWords };

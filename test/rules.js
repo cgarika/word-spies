@@ -39,8 +39,25 @@ const spyOf = (cs,team)=>cs.find(c=>c.st.youAreSpymaster && c.st.yourTeam===team
 const guesserOf = (cs,team)=>cs.find(c=>!c.st.youAreSpymaster && c.st.yourTeam===team);
 const idxWhere = (key,revealed,t)=>key.findIndex((v,i)=>v===t && !revealed[i]);
 
+function t14Unit(){
+  const { WORD_PACKS, pickWords } = require("../server.js");
+  const all = new Set(Object.values(WORD_PACKS).flat());
+  if (all.size < 400) throw new Error("T14: word bank has only "+all.size+" words");
+  for (const k of ["general","movies","food","kids","india"]) if (!(WORD_PACKS[k] && WORD_PACKS[k].length >= 40)) throw new Error("T14: pack "+k+" missing or too small");
+  // pack selection filters: only words from the chosen packs appear
+  { const room = { packs:["movies","food"] }; for (let g=0; g<5; g++) { const w = pickWords(room); if (w.length!==25) throw new Error("T14: board needs 25 words"); const ok = new Set([...WORD_PACKS.movies, ...WORD_PACKS.food]); for (const x of w) if (!ok.has(x)) throw new Error("T14: word outside the selected packs: "+x); } }
+  { const room = { packs:["india"] }; const w = pickWords(room); if (w.some(x=>!WORD_PACKS.india.includes(x))) throw new Error("T14: india pack leaked other words"); }
+  { const room = {}; const w = pickWords(room); if (w.some(x=>!WORD_PACKS.general.includes(x))) throw new Error("T14: default should be the general pack"); }
+  // no repeats across 10 consecutive games in one room (general pack: 270 words ≥ 250 needed)
+  { const room = { packs:["general"] }; const seen = new Set(); for (let g=0; g<10; g++) { for (const x of pickWords(room)) { if (seen.has(x)) throw new Error("T14: word repeated within 10 games: "+x); seen.add(x); } } if (seen.size!==250) throw new Error("T14: expected 250 distinct words, got "+seen.size); }
+  // a small pool (one pack of ~105 words) still deals 25 every game, recycling the oldest words first
+  { const room = { packs:["movies"] }; for (let g=0; g<12; g++) if (pickWords(room).length!==25) throw new Error("T14: small pool failed to deal 25"); }
+  console.log("PASS T14 word bank "+all.size+" words, 5 packs; pack filter holds; 10 games in a row with no repeated word");
+}
+
 (async()=>{
   try{
+    t14Unit();
     // ---- Test 1: setup + secrecy ----
     let cs = await boot(4,"s");
     const r0 = cs[0].st;
