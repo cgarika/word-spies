@@ -16,6 +16,8 @@ const MIN_PLAYERS = 4;
 const MAX_PLAYERS = 12;
 const CLUE_MS = Number(process.env.CLUE_MS || 90000);
 const GUESS_MS = Number(process.env.GUESS_MS || 75000);
+const AFK_MS = Math.max(200, Number(process.env.AFK_MS || 5000));   // T1: the phase ends this soon once everyone who could act is disconnected
+const TIMEOUTS_TO_BOT = 3;                                              // consecutive missed phases before the seat is skipped automatically
 
 const WORDS = ("ocean,river,mountain,forest,desert,island,volcano,glacier,canyon,beach,storm,thunder,rainbow,shadow,mirror,candle,lantern,bridge,castle,tower,tunnel,harbor,anchor,compass,map,treasure,pirate,ninja,knight,dragon,giant,witch,ghost,robot,alien,rocket,planet,comet,star,moon,sun,cloud,wind,fire,ice,stone,crystal,diamond,gold,silver,copper,iron,steel,glass,paper,scissors,hammer,needle,thread,button,pocket,jacket,boot,glove,crown,ring,chain,key,lock,door,window,ladder,rope,net,trap,cage,nest,egg,feather,wing,claw,tail,horn,shell,spider,scorpion,snake,eagle,falcon,owl,raven,wolf,fox,bear,tiger,lion,panther,shark,whale,dolphin,octopus,crab,turtle,frog,rabbit,mouse,horse,camel,elephant,monkey,panda,koala,penguin,seal,batman,circus,clown,magician,juggler,acrobat,parade,carnival,festival,concert,orchestra,violin,piano,trumpet,drum,flute,guitar,opera,ballet,statue,museum,gallery,library,school,hospital,market,bakery,butcher,farmer,doctor,nurse,pilot,sailor,soldier,spy,detective,judge,lawyer,teacher,student,chef,waiter,barber,tailor,king,queen,prince,princess,wizard,angel,devil,giant,dwarf,elf,troll,zombie,vampire,mummy,skeleton,pyramid,sphinx,temple,church,mosque,palace,fortress,dungeon,maze,garden,fountain,well,mill,barn,fence,gate,path,road,highway,train,subway,tram,bus,taxi,truck,tractor,bicycle,scooter,ship,boat,canoe,ferry,submarine,helicopter,parachute,balloon,kite,arrow,bow,sword,shield,armor,helmet,cannon,bomb,torch,flag,banner,trophy,medal,ticket,coin,wallet,basket,bottle,barrel,bucket,kettle,teapot,plate,spoon,fork,knife,pan,oven,fridge,ladder,broom,brush,soap,towel,pillow,blanket,carpet,curtain,clock,calendar,letter,stamp,pencil,eraser,notebook,camera,radio,telephone,battery,magnet,engine,wheel,spring,screw,pipe,wire,cable,satellite,antenna,laser,microscope,telescope").split(",").map(w=>w.trim()).filter(Boolean).filter((w,i,a)=>a.indexOf(w)===i);
 
@@ -89,22 +91,88 @@ function flipTurn(room, msg) {
   room.clue = null;
   room.guessesLeft = 0;
   room.guessedThisTurn = 0;
+  room.actedThisTurn = new Set();
   if (msg) room.log = msg;
   armTimer(room);
 }
 
+/* T1 AFK policy. There is no bot heuristic in Word Spies: a skipped seat is simply not waited for.
+   "Pending" = the players who could still act in this phase and are not bot-controlled. */
+function pendingActors(room) {
+  if (room.status !== "playing") return [];
+  const t = room.turnTeam;
+  if (room.phase === "clue") { const sp = room.players[room.spymaster[t]]; return sp && !sp.left && !sp.botControlled ? [sp] : []; }
+  if (room.phase === "guess") return room.players.filter((p, s) => !p.left && room.teamOf[s] === t && room.spymaster[t] !== s && !p.botControlled);
+  return [];
+}
+function guessersOf(room, t) { return room.players.map((p, s) => (!p.left && room.teamOf[s] === t && room.spymaster[t] !== s ? s : -1)).filter((s) => s >= 0); }
+/* Nobody left to act for the turn team. Mirrors the leave rule: a team that cannot play forfeits.
+   If only the map is unmanned but a guesser is available, hand the map over instead. */
+function skipIfNobody(room) {
+  if (room.status !== "playing" || pendingActors(room).length) return false;
+  const t = room.turnTeam, o = t === "A" ? "B" : "A";
+  const avail = (team) => room.players.map((p, s) => (!p.left && !p.botControlled && room.teamOf[s] === team ? s : -1)).filter((s) => s >= 0);
+  if (!avail(o).length && !avail(t).length) { endGame(room, null, "abandoned", "Nobody is left at the table. Game over."); return true; }
+  if (room.phase === "clue") {
+    const mate = avail(t).find((s) => room.players[s].connected) ?? avail(t)[0];
+    if (mate != null) { room.spymaster[t] = mate; room.log = `${room.players[mate].name} takes over the map for ${tname(t)}.`; return false; }   // pending is non-empty now
+  }
+  endGame(room, o, "forfeit", `${tname(t)} has nobody left to ${room.phase === "clue" ? "give clues" : "guess"} — ${tname(o)} wins by default.`);
+  return true;
+}
+function refreshAfkClock(room) {
+  if (room.status !== "playing") return;
+  if (skipIfNobody(room)) return;
+  const pend = pendingActors(room);
+  if (pend.some((p) => p.connected)) return;
+  const soon = Date.now() + AFK_MS;
+  if (room.phaseEndsAt && room.phaseEndsAt <= soon) return;
+  room.phaseEndsAt = soon;
+  clearT(room.code);
+  timers.set(room.code, setTimeout(() => onPhaseTimeout(room.code), AFK_MS));
+}
 function armTimer(room) {
   clearT(room.code);
   if (room.status !== "playing") { room.phaseEndsAt = null; return; }
-  const ms = room.phase === "clue" ? CLUE_MS : GUESS_MS;
+  room.actedThisTurn = room.actedThisTurn || new Set();
+  if (skipIfNobody(room)) return;   // flipTurn re-arms
+  const pend = pendingActors(room);
+  const base = room.phase === "clue" ? CLUE_MS : GUESS_MS;
+  const ms = pend.length && pend.every((p) => !p.connected) ? Math.min(base, AFK_MS) : base;
   room.phaseEndsAt = Date.now() + ms;
-  timers.set(room.code, setTimeout(() => {
-    const r = rooms.get(room.code);
-    if (!r || r.status !== "playing") return;
-    if (r.phase === "clue") flipTurn(r, `Time! ${tname(r.turnTeam)}'s spymaster froze — turn passes.`);
-    else flipTurn(r, `Time! ${tname(r.turnTeam)} ran out of guessing time.`);
-    bump(r);
-  }, ms));
+  timers.set(room.code, setTimeout(() => onPhaseTimeout(room.code), ms));
+}
+function onPhaseTimeout(code) {
+  const r = rooms.get(code);
+  if (!r || r.status !== "playing") return;
+  const notes = [];
+  const t = r.turnTeam;
+  for (const p of pendingActors(r)) {
+    const s = r.players.indexOf(p);
+    if (r.phase === "guess" && r.actedThisTurn && r.actedThisTurn.has(s)) { p.timeouts = 0; continue; }   // they did tap this turn
+    p.timeouts = (p.timeouts || 0) + 1;
+    if (p.timeouts >= TIMEOUTS_TO_BOT && !p.botControlled) {
+      p.botControlled = true;
+      notes.push(`${p.name} is away (missed ${TIMEOUTS_TO_BOT} in a row) — the table no longer waits for them.`);
+      if (r.spymaster[t] === s) {   // hand the map to an available teammate so the team can keep playing
+        const mate = guessersOf(r, t).find((g) => r.players[g].connected && !r.players[g].botControlled);
+        if (mate != null) { r.spymaster[t] = mate; notes.push(`${r.players[mate].name} takes over the map for ${tname(t)}.`); }
+      }
+    }
+  }
+  if (r.phase === "clue") flipTurn(r, `Time! ${tname(t)}'s spymaster froze — turn passes.`);
+  else flipTurn(r, `Time! ${tname(t)} ran out of guessing time.`);
+  if (notes.length) r.log = `${notes.join(" ")} ${r.log || ""}`.trim();
+  bump(r);
+}
+/* The human acts (or reconnects): stop skipping them and reset the streak. */
+function humanIsBack(room, p, reason) {
+  const wasBot = !!p.botControlled;
+  p.timeouts = 0;
+  if (!wasBot) return false;
+  p.botControlled = false;
+  room.log = `${p.name} is back at the table${reason ? " (" + reason + ")" : ""}.`;
+  return true;
 }
 
 function tname(t) { return t === "A" ? "Red" : "Blue"; }
@@ -123,7 +191,7 @@ function stateFor(room, seat) {
     hostSeat: room.players.findIndex((p) => p.id === room.host),
     minPlayers: MIN_PLAYERS, maxPlayers: MAX_PLAYERS,
     players: room.players.map((p, s) => ({
-      name: p.name, avatar: p.avatar, left: p.left, connected: p.connected,
+      name: p.name, avatar: p.avatar, left: p.left, connected: p.connected, botControlled: !!p.botControlled,
       team: room.teamOf ? room.teamOf[s] || null : null,
       spymaster: room.spymaster ? (room.spymaster.A === s || room.spymaster.B === s) : false,
     })),
@@ -209,7 +277,7 @@ io.on("connection", (socket) => {
     if (!room) return socket.emit("err", "No room with that code.");
     socket.data.playerId = playerId;
     const existing = room.players.find((p) => p.id === playerId);
-    if (existing) { existing.connected = true; existing.left = false; attach(code); socket.emit("joined", { code }); bump(room); return; }
+    if (existing) { existing.connected = true; existing.left = false; humanIsBack(room, existing, "reconnected"); attach(code); socket.emit("joined", { code }); bump(room); return; }
     if (room.status !== "lobby") return socket.emit("err", "That game already started.");
     if (room.players.length >= MAX_PLAYERS) return socket.emit("err", "Room is full (12).");
     name = clean(name, 18); if (!name) return socket.emit("err", "Pick a name first.");
@@ -233,6 +301,7 @@ io.on("connection", (socket) => {
     const room = currentRoom();
     if (!room || room.status !== "playing" || room.phase !== "clue") return;
     const seat = mySeat();
+    if (seat >= 0 && humanIsBack(room, room.players[seat], "took the seat back")) bump(room);
     if (seat < 0 || room.spymaster[room.turnTeam] !== seat) return;
     word = clean(word, 20).toUpperCase();
     if (!/^[A-Z]{2,20}$/.test(word)) return socket.emit("err", "Clue must be a single word, letters only.");
@@ -257,9 +326,11 @@ io.on("connection", (socket) => {
     const room = currentRoom();
     if (!room || room.status !== "playing" || room.phase !== "guess") return;
     const seat = mySeat();
+    if (seat >= 0 && humanIsBack(room, room.players[seat], "took the seat back")) bump(room);
     if (seat < 0 || room.teamOf[seat] !== room.turnTeam) return;
     if (room.spymaster.A === seat || room.spymaster.B === seat) return; // spymasters never tap
     if (!Number.isInteger(i) || i < 0 || i > 24 || room.revealed[i]) return;
+    (room.actedThisTurn = room.actedThisTurn || new Set()).add(seat); room.players[seat].timeouts = 0;
     const truth = room.key[i];
     room.revealed[i] = truth;
     room.guessedThisTurn++;
@@ -288,10 +359,17 @@ io.on("connection", (socket) => {
     const room = currentRoom();
     if (!room || room.status !== "playing" || room.phase !== "guess") return;
     const seat = mySeat();
+    if (seat >= 0 && humanIsBack(room, room.players[seat], "took the seat back")) bump(room);
     if (seat < 0 || room.teamOf[seat] !== room.turnTeam) return;
+    room.players[seat].timeouts = 0;
     const passer = room.turnTeam;
     flipTurn(room, `${tname(passer)} passed. ${tname(passer === "A" ? "B" : "A")}'s turn.`);
     bump(room);
+  });
+  socket.on("takeSeat", () => {
+    const room = currentRoom(); if (!room) return;
+    const seat = mySeat();
+    if (seat >= 0 && humanIsBack(room, room.players[seat], "took the seat back")) bump(room);
   });
   socket.on("pushToken", ({ token } = {}) => { const room = currentRoom(); if (!room) return; const p = room.players.find((q) => q.id === socket.data.playerId); if (p && typeof token === "string" && /^[0-9a-f]{32,200}$/i.test(token)) p.pushToken = token; });
   socket.on("presence", ({ away } = {}) => { const room = currentRoom(); if (!room) return; const p = room.players.find((q) => q.id === socket.data.playerId); if (p) p.away = !!away; });
@@ -385,7 +463,7 @@ io.on("connection", (socket) => {
     const p = room.players.find((q) => q.id === socket.data.playerId);
     if (p) { p.connected = false; if (room.voice) room.voice.delete(room.players.indexOf(p)); room.v++; }
     detach();
-    if (rooms.has(room.code)) sendState(room.code);
+    if (rooms.has(room.code)) { refreshAfkClock(room); sendState(room.code); }
   });
 });
 

@@ -130,6 +130,36 @@ const idxWhere = (key,revealed,t)=>key.findIndex((v,i)=>v===t && !revealed[i]);
     if (after.status!=="playing") throw new Error("game should continue after handover");
     console.log("PASS handover — leaving spymaster replaced by teammate, game continues");
     cs.forEach(c=>c.close());
+
+    // ---- Test 6 (T1 AFK policy): own fast-clock server on 3431 ----
+    {
+      const { spawn } = require("child_process");
+      const CLUE=700, AFK=250, P=3431, URL2="http://localhost:"+P;
+      const srv = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT:String(P), CLUE_MS:String(CLUE), GUESS_MS:String(CLUE), AFK_MS:String(AFK) }, stdio:"ignore" });
+      await sleep(600);
+      const mk2=(name)=>{ const c=io(URL2,{transports:["websocket"],reconnection:false}); c.nm=name; c.st=null; c.seat=-1; c.logs=[]; c.on("state",({room,mySeat})=>{ c.st=room; c.seat=mySeat; if(room&&room.log) c.logs.push(room.log); }); return c; };
+      const wait=async(fn,ms)=>{ const t0=Date.now(); while(Date.now()-t0<ms){ if(fn()) return true; await sleep(15);} return false; };
+      const boot2=async(pfx)=>{ const cs=[]; for(let i=0;i<4;i++) cs.push(mk2(pfx+i)); await sleep(250); let code=null; cs[0].on("joined",j=>{code=j.code;}); cs[0].emit("create",{name:pfx+"0",playerId:pfx+"id0"+Math.random(),avatar:"🕵️"}); await wait(()=>code,2000); for(let i=1;i<4;i++) cs[i].emit("join",{code,name:pfx+i,playerId:pfx+"id"+i+Math.random(),avatar:"🕵️"}); await wait(()=>cs[0].st&&cs[0].st.players.length===4,2000); cs[0].emit("start"); await wait(()=>cs.every(c=>c.st&&c.st.status==="playing"&&c.st.yourTeam),2000); return cs; };
+      try {
+        // 6a. the turn team's spymaster disconnects → the clue phase ends on the AFK clock and the turn passes
+        { const cs=await boot2("a"); const t=cs[0].st.turnTeam; const spy=cs.find(c=>c.st.youAreSpymaster&&c.st.yourTeam===t); const W=cs.find(c=>c!==spy);
+          spy.disconnect(); const t0=Date.now();
+          if(!(await wait(()=>W.st&&W.st.turnTeam!==t, CLUE+800))) throw new Error("AFK: turn did not pass with a disconnected spymaster"); const dt=Date.now()-t0; if(dt>=CLUE) throw new Error("AFK: waited the full clock ("+dt+" ms)");
+          console.log("PASS AFK disconnected spymaster — turn passed after "+dt+" ms (clock "+CLUE+")"); cs.forEach(c=>c.disconnect()); }
+        // 6b. a connected spymaster who never gives a clue: 3 missed turns → marked away, map handed to the teammate; takeSeat brings them back
+        { const cs=await boot2("b"); const t=cs[0].st.turnTeam; const spy=cs.find(c=>c.st.youAreSpymaster&&c.st.yourTeam===t); const o=t==="A"?"B":"A";
+          const oSpy=cs.find(c=>c.st.youAreSpymaster&&c.st.yourTeam===o), oG=cs.find(c=>!c.st.youAreSpymaster&&c.st.yourTeam===o);
+          // the other team plays instantly: clue then pass
+          oSpy.on("state",()=>{ const r=oSpy.st; if(r&&r.status==="playing"&&r.phase==="clue"&&r.turnTeam===o) setTimeout(()=>oSpy.emit("clue",{word:"ZEBRAXQ",count:1}),10); });
+          oG.on("state",()=>{ const r=oG.st; if(r&&r.status==="playing"&&r.phase==="guess"&&r.turnTeam===o) setTimeout(()=>oG.emit("pass"),10); });
+          const spySeat=spy.seat;
+          if(!(await wait(()=>spy.st&&spy.st.players[spySeat]&&spy.st.players[spySeat].botControlled, CLUE*10))) throw new Error("AFK: idle spymaster never marked away (status "+(spy.st&&spy.st.status)+", seat "+spySeat+", team "+t+", last logs: "+spy.logs.slice(-3).join(" | ")+")");
+          if(!(await wait(()=>spy.logs.some(l=>/is away/.test(l)),500))) throw new Error("AFK: no away log");
+          const handed=spy.st.players.some((p,i)=>p.spymaster&&i!==spySeat&&p.team===t); if(!handed) throw new Error("AFK: map was not handed to the teammate");
+          spy.emit("takeSeat"); if(!(await wait(()=>!spy.st.players[spySeat].botControlled,1500))) throw new Error("AFK: takeSeat did not clear the flag");
+          console.log("PASS AFK 3 missed clues → away + map handed over, takeSeat brings the player back"); cs.forEach(c=>c.disconnect()); }
+      } finally { srv.kill(); }
+    }
     console.log("ALL WORD SPIES TESTS PASS");
     process.exit(0);
   }catch(e){ console.error("FAIL:", e.message); process.exit(1); }

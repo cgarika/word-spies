@@ -253,6 +253,7 @@
     <button class="btn plain" id="passBtn">End our turn</button>
   </div>
   <div class="actionhint" id="actionhint"></div>
+  <button class="btn hidden" id="seatBackBtn" style="width:auto;margin:6px auto 0;display:block" onclick="socket.emit('takeSeat')">Take my seat back</button>
   <div class="log" id="log"></div>
   <div class="overbox hidden" id="overbox">
     <div class="cup" id="overcup">🏆</div>
@@ -413,7 +414,7 @@ function renderLobby(r){
 /* game */
 function memList(r, t){
   return r.players.map((p,i)=>({p,i})).filter(x=>x.p.team===t && !x.p.left)
-    .map(x=>`${x.p.spymaster?"🗝️ ":""}${x.i===S.mySeat?"You":esc(x.p.name)}`).join("<br>");
+    .map(x=>`${x.p.spymaster?"🗝️ ":""}${x.i===S.mySeat?"You":esc(x.p.name)}${x.p.botControlled?" <span title=\"Away — the table no longer waits for them\">💤</span>":""}`).join("<br>");
 }
 function renderGame(r){
   show("game");
@@ -479,7 +480,10 @@ function renderGame(r){
   if (iClue && !$("counts").innerHTML) drawCounts();
   $("guessrow").classList.toggle("hidden", !canTap);
 
+  const meBot = S.mySeat>=0 && r.players[S.mySeat] && r.players[S.mySeat].botControlled && r.status==="playing";
+  $("seatBackBtn").classList.toggle("hidden", !meBot);
   if (r.status==="over") $("actionhint").innerHTML = "";
+  else if (meBot) $("actionhint").innerHTML = "You were marked away — <b>take your seat back</b> to rejoin the play.";
   else if (iClue) $("actionhint").innerHTML = "Type <b>one word</b>, pick a number, send. Don't say it out loud twice 😉";
   else if (canTap) $("actionhint").innerHTML = "Talk it out, then <b>tap a word</b>. Own color = keep going.";
   else if (myTurn && r.phase==="clue") $("actionhint").innerHTML = "Your spymaster is scheming…";
